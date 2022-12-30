@@ -1,28 +1,33 @@
 package main
 
 import (
-	"log"
+	"errors"
+	"hash/maphash"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
+	"github.com/valyala/fasthttp"
 )
 
 var version = "devel" // -ldflags="-X 'main.version=X.X.X'"
 
+var log zerolog.Logger
+
 func main() {
 	go func() {
-		log.Println(http.ListenAndServe("localhost:6068", nil))
+		log.Print(http.ListenAndServe("localhost:6068", nil))
 	}()
 
 	// logger
-	log := zerolog.New(zerolog.ConsoleWriter{
+	log = zerolog.New(zerolog.ConsoleWriter{
 		Out: os.Stderr,
 	}).With().Timestamp().Logger().Hook(SeverityHook{})
 	zerolog.TimeFieldFormat = time.RFC3339Nano
@@ -58,6 +63,12 @@ func main() {
 			Aliases: []string{"q"},
 			Usage:   "Flag is equivalent to --log-level=quite",
 		},
+
+		// fasthttp settings
+		&cli.StringFlag{
+			Name:  "listen-addr",
+			Value: ":8089",
+		},
 	}
 
 	app.Action = func(c *cli.Context) (e error) {
@@ -74,7 +85,7 @@ func main() {
 		log.Debug().Msg("ready...")
 		log.Debug().Strs("args", os.Args).Msg("")
 
-		return application.NewApp(c, &log).Bootstrap()
+		return newService(c).bootstrap()
 	}
 
 	// TODO sort.Sort of Flags uses too much allocs; temporary disabled
@@ -104,4 +115,99 @@ func (SeverityHook) Run(e *zerolog.Event, level zerolog.Level, _ string) {
 
 	fn := strings.Split(rfn, "/")
 	e.Str("func", fn[len(fn)-1:][0])
+}
+
+var (
+	errApiHeadersUndefined = errors.New("coudl not parse some required headers")
+)
+
+type service struct {
+	locker  sync.RWMutex
+	storage map[uint64][]byte
+
+	seed maphash.Seed
+
+	c *cli.Context
+}
+
+func newService(c *cli.Context) *service {
+	return &service{
+		storage: make(map[uint64][]byte),
+		seed:    maphash.MakeSeed(),
+
+		c: c,
+	}
+}
+
+func (m *service) bootstrap() (e error) {
+	return fasthttp.ListenAndServe(m.c.String("listen-addr"), m.httpHandler)
+}
+
+func (*service) hlpRespondError(r *fasthttp.Response, err error, status ...int) {
+	status = append(status, fasthttp.StatusInternalServerError)
+
+	r.Header.Set("X-Error", err.Error())
+	r.SetStatusCode(status[0])
+
+	log.Error().Err(err).Msg("")
+}
+
+func (m *service) httpHandler(ctx *fasthttp.RequestCtx) {
+	if len(ctx.Request.Header.Peek("X-Cache-Server")) == 0 {
+		m.hlpRespondError(&ctx.Response, errApiHeadersUndefined, fasthttp.StatusBadRequest)
+		return
+	}
+
+	cserver, ok := m.getCacheNode(ctx.Request.URI().Path())
+	if !ok {
+		log.Trace().Msg("could not found cache server, trying to write new element in storage...")
+		cserver, ok = m.pushCacheNode(ctx.Request.URI().Path(), ctx.Request.Header.Peek("X-Cache-Server"))
+		if !ok {
+			log.Trace().Msg("there is no new element was writed; it seems that requested server appears beetween locks")
+		} else {
+			log.Trace().Msg("new element has been added in storage")
+		}
+	} else {
+		log.Trace().Msg("cache node has been found in storage")
+	}
+
+	ctx.Response.Header.SetBytesV("x-Location", cserver)
+	ctx.Response.SetStatusCode(fasthttp.StatusOK)
+}
+
+// TODO optimize, remove allocations
+func (m *service) getMapKeyFromUri(uri []byte) uint64 {
+	var hsh *maphash.Hash
+	hsh.SetSeed(m.seed)
+
+	hsh.Write(uri)
+	return hsh.Sum64()
+}
+
+func (m *service) getCacheNode(uri []byte) (val []byte, ok bool) {
+	sum := m.getMapKeyFromUri(uri)
+	m.locker.RLock()
+
+	val, ok = m.storage[sum]
+	m.locker.RUnlock()
+
+	return
+}
+
+// TODO optimize lockers
+func (m *service) pushCacheNode(uri []byte, server []byte) (val []byte, ok bool) {
+	sum := m.getMapKeyFromUri(uri)
+	m.locker.Lock()
+
+	val, ok = m.storage[sum]
+
+	if ok {
+		m.locker.Unlock()
+		return val, false
+	}
+
+	m.storage[sum] = server
+	m.locker.Unlock()
+
+	return server, true
 }

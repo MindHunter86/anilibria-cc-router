@@ -177,7 +177,7 @@ func (m *service) httpHandler(ctx *fasthttp.RequestCtx) {
 
 // TODO optimize, remove allocations
 func (m *service) getMapKeyFromUri(uri []byte) uint64 {
-	var hsh *maphash.Hash
+	var hsh maphash.Hash
 	hsh.SetSeed(m.seed)
 
 	hsh.Write(uri)

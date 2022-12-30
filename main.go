@@ -42,7 +42,7 @@ func main() {
 		},
 	}
 	app.Copyright = "(c) 2022-2023 mindhunter86\nwith love for Anilibria project"
-	app.Usage = ""
+	app.Usage = "Cloud Cache Router for Anilibria project"
 
 	app.Flags = []cli.Flag{
 		// common flags

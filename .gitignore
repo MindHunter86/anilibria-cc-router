@@ -1,0 +1,42 @@
+# .gitignore
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+
+# gRPC generated code
+# swarm/grpc/*.pb.go
+
+# Binary data
+bin/
+__debug_bin
+
+# VSCode data
+pkg/.vscode/launch.json
+.vscode/launch.json
+
+# removing sesetive data
+..bfg-report/
+
+# remove test p2p code
+p2p/
+
+# removing dynamic content and test data
+.bash_history
+data/
+test/
+*.sock
+*.cert
+*.crt

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"hash/maphash"
 	"net/http"
@@ -167,10 +166,6 @@ func (m *service) httpHandler(ctx *fasthttp.RequestCtx) {
 			log.Trace().Msg("there is no new element was writed; it seems that requested server appears beetween locks")
 		} else {
 			log.Trace().Msg("new element has been added in storage")
-
-			ctx.Response.Header.SetBytesV("X-Location", cserver)
-			ctx.Response.SetStatusCode(fasthttp.StatusNotFound)
-			return
 		}
 	} else {
 		log.Trace().Msg("cache node has been found in storage")
@@ -178,12 +173,7 @@ func (m *service) httpHandler(ctx *fasthttp.RequestCtx) {
 
 	ctx.Response.Header.SetBytesV("X-Requested-Server", ctx.Request.Header.Peek("X-Cache-Server"))
 	ctx.Response.Header.SetBytesV("X-Location", cserver)
-	if bytes.Equal(cserver, ctx.Request.Header.Peek("X-Cache-Server")) {
-		ctx.Response.SetStatusCode(fasthttp.StatusNotModified)
-	} else {
-		ctx.Response.SetStatusCode(fasthttp.StatusTemporaryRedirect)
-	}
-
+	ctx.Response.SetStatusCode(fasthttp.StatusOK)
 }
 
 // TODO optimize, remove allocations

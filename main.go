@@ -162,10 +162,12 @@ func (m *service) httpHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	cserver, ok := m.getCacheNode(ctx.Request.Header.Peek("X-Request-Uri"))
+	uri := fasthttp.AcquireURI()
+	uri.Parse(nil, ctx.Request.Header.Peek("X-Request-Uri"))
+	cserver, ok := m.getCacheNode(uri.Path())
 	if !ok {
 		log.Trace().Msg("could not found cache server, trying to write new element in storage...")
-		cserver, ok = m.pushCacheNode(ctx.Request.Header.Peek("X-Request-Uri"), ctx.Request.Header.Peek("X-Cache-Server"))
+		cserver, ok = m.pushCacheNode(uri.Path(), ctx.Request.Header.Peek("X-Cache-Server"))
 		if !ok {
 			log.Trace().Msg("there is no new element was writed; it seems that requested server appears beetween locks")
 		} else {

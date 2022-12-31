@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"hash/maphash"
 	"net/http"
@@ -166,13 +167,23 @@ func (m *service) httpHandler(ctx *fasthttp.RequestCtx) {
 			log.Trace().Msg("there is no new element was writed; it seems that requested server appears beetween locks")
 		} else {
 			log.Trace().Msg("new element has been added in storage")
+
+			ctx.Response.Header.SetBytesV("X-Location", cserver)
+			ctx.Response.SetStatusCode(fasthttp.StatusNotFound)
+			return
 		}
 	} else {
 		log.Trace().Msg("cache node has been found in storage")
 	}
 
-	ctx.Response.Header.SetBytesV("x-Location", cserver)
-	ctx.Response.SetStatusCode(fasthttp.StatusOK)
+	ctx.Response.Header.SetBytesV("X-Requested-Server", ctx.Request.Header.Peek("X-Cache-Server"))
+	ctx.Response.Header.SetBytesV("X-Location", cserver)
+	if bytes.Equal(cserver, ctx.Request.Header.Peek("X-Cache-Server")) {
+		ctx.Response.SetStatusCode(fasthttp.StatusNotModified)
+	} else {
+		ctx.Response.SetStatusCode(fasthttp.StatusTemporaryRedirect)
+	}
+
 }
 
 // TODO optimize, remove allocations
@@ -186,10 +197,14 @@ func (m *service) getMapKeyFromUri(uri []byte) uint64 {
 
 func (m *service) getCacheNode(uri []byte) (val []byte, ok bool) {
 	sum := m.getMapKeyFromUri(uri)
+	log.Trace().Uint64("value", sum).Msg("")
+
 	m.locker.RLock()
 
 	val, ok = m.storage[sum]
 	m.locker.RUnlock()
+
+	log.Trace().Bool("ok", ok).Str("val", string(val)).Msg("")
 
 	return
 }
@@ -199,15 +214,22 @@ func (m *service) pushCacheNode(uri []byte, server []byte) (val []byte, ok bool)
 	sum := m.getMapKeyFromUri(uri)
 	m.locker.Lock()
 
+	log.Trace().Msg("trying to push new value")
+
 	val, ok = m.storage[sum]
 
 	if ok {
+		log.Trace().Msg("returned value is ok, stop pushing")
 		m.locker.Unlock()
 		return val, false
 	}
 
-	m.storage[sum] = server
+	value := make([]byte, len(server))
+	log.Print(copy(value, server))
+	m.storage[sum] = value
 	m.locker.Unlock()
 
-	return server, true
+	log.Trace().Str("server", string(value)).Msg("pushed new value")
+
+	return value, true
 }
